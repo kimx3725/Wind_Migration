@@ -1,0 +1,192 @@
+---
+title: "1.Tern_wind_visualization"
+author: "Dennis Kim"
+date: '2022-05-25'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preamble 
+
+call relevant libraries 
+```{r import_libraries}
+# data wrangling 
+library(dplyr)
+library(readr)
+library(data.table)
+library(ezknitr)
+library(here)
+library(DT)
+library(lubridate)
+library(stringr)
+library(bit64)
+library(tidyr)
+library(lubridate)
+library(adehabitatLT)
+
+# visualization
+library(moveVis)
+library(move)
+library(ggplot2)
+library(gganimate)
+library(magick)
+library(ggOceanMaps)
+library(ggspatial)
+library(grid)
+library(transformr)
+library(gifski)
+library(magick)
+library(cmocean)
+
+# environmental layers 
+library(raster)
+library(rWind)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+```
+
+# Environmental data
+
+Import the raw tracking data from your designated folder 
+
+## world map data 
+```{r ocean data}
+# call the sf object of world map from rnaturalearth pacakge
+world <- ne_countries(scale = "medium", returnclass = "sf")
+```
+
+## daily wind data
+```{r wind data}
+# call the wind_data rds
+wind <- read_rds(here("data", "modified_fall_wind_daily.Rdata"))
+
+# summary of the filtered wind data
+summary(wind)
+```
+
+# Movement data
+
+## tern data
+
+Import the tracking data (BF426)
+```{r tern data}
+# tern data
+
+## call the raw filtered csv data - name it as its id 
+BF426 <- fread(here("data/ModeledTracks/BF426_smNEW.csv"))
+
+## create a new column with id 
+BF426 <- BF426 %>% mutate(names = "BF426")
+
+## only select fall migration (2017-08-08 12:22:00 ~ 2017-11-17 12:22:00)
+fall.BF426 <- BF426 %>% filter(Time1 > '2017-08-08 00:00:00' & Time1 < "2017-11-17 23:59:59")
+
+## summary of terns 
+summary(fall.BF426)
+```
+
+Find the regularized time stamps for the individuals 
+```{r fall migratiom BF426}
+# Table of time intervals in data 
+plot(table(diff(fall.BF426$Time1)), xlim = c(0,24), xlab = "time interval (hour)", ylab = "count")
+```
+It looks like 11 hours might be the best regularized timestamp for this individual. 
+
+Regular time intervals using NAs 
+```{r regularized the time}
+# select the columns that we want only
+trk <- fall.BF426 %>% dplyr::select(Time1, `Lon.50%`, `Lat.50%`, names)
+
+# change the column names 
+colnames(trk) <- c("time","x","y","ID")
+
+# convert the data to move object
+fall.tern <- move(x = trk$x, y = trk$y, time = as.POSIXct(trk$time, format = "%Y-%m-%d %H:%M:%OS", tz="UTC"),
+                  data = trk, animal= trk$ID)
+
+# align the movement data to a uniform time scale (11 hrs)
+fall.tern.mv <- align_move(fall.tern, res = 11, unit = "hours", spaceMethod = "greatcircle")
+
+# check if it was correctly regularized 
+summary(fall.tern.mv)
+
+# convert the moveobject back to data frame 
+mvDF <- as.data.frame(fall.tern.mv)
+
+# change the column to id 
+colnames(mvDF)[10] <- "id"
+
+# convert data time as integer 
+mvDF$time = as.Date(mvDF$time)
+
+# check
+head(mvDF)
+
+# save the move object of BF426
+#write_rds(mvDF, path = here("data", "mvDF_daily.Rdata"))
+```
+
+Since the tracking points are multiple within a day, we would like to average them out per day so that it matches with the wind time periods and show one point per day when we simulate
+```{r further trk modification}
+# avg location per day 
+avg.mvDF = mvDF %>% group_by(time, id) %>% 
+  summarise(x = mean(x),
+            y = mean(y))
+
+# check the data 
+summary(avg.mvDF)
+
+# save the avg move object of BF426
+#write_rds(avg.mvDF, path = here("data", "avg_mvDF_daily.Rdata"))
+```
+
+
+## Visualization
+```{r mv and wind visualization}
+# visualization 
+tern.move.wind.vector = ggplot()+
+  
+  # wind layer
+  geom_raster(data = wind, aes(x = lon, y = lat, fill = velocity))+
+  geom_segment(data = wind,
+               aes(x = lon, xend = lon+u/10, y = lat, yend = lat+v/10), arrow = arrow(length = unit(0.2, "cm")))+
+  scale_fill_gradientn(colours = cmocean('speed')(320), limits = c(0,32), 
+                       na.value = "white", name = "Speed\n (m/s)")+
+  
+  # environmental layer
+  geom_sf(data = world, fill = "grey85", col = 1)+
+  coord_sf(xlim = c(-80, 30), ylim = c(-70, 70), expand = FALSE)+
+  
+  # movement track 
+  geom_point(data = avg.mvDF, aes(x = x, y = y, colour = "BF426"), fill = "red",alpha = 1, shape = 21, size = 4) + 
+  #geom_path(data = avg.mvDF, aes(x = x, y = y, color = id), size = 2) +
+  scale_color_manual(values = c("red"), name = "ID")+
+  
+  # formatting
+  scale_x_continuous(breaks = c(-80,30))+
+  theme_bw()
+
+# check the ggplot visualization
+#tern.move.wind.vector
+
+# gganimate specifics 
+tern.anim = tern.move.wind.vector+ transition_time(time) +
+  labs(x = NULL, y = NULL, title = "Arctic Tern BF426: {frame_time}")+ 
+  ease_aes("linear")
+
+# animate the visualization
+animate(tern.anim, height = 1000, width = 1000, fps = 5)
+
+# save the animation 
+anim_save("fall_BF426_wind.gif", width = 1000, height = 1000)
+```
+
+
+# Document Footer
+```{r}
+sessionInfo()
+```
