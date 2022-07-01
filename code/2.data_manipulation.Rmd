@@ -1,0 +1,144 @@
+---
+title: "2.data-prep.Rmd"
+author: "Dennis Kim"
+date: "5/27/2022"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preamble 
+
+call relevant libraries 
+```{r import_libraries}
+# data wrangling 
+library(dplyr)
+library(readr)
+library(data.table)
+library(ezknitr)
+library(here)
+library(DT)
+library(lubridate)
+library(stringr)
+library(bit64)
+library(tidyr)
+library(purrr)
+
+# environmental layers 
+library(raster)
+library(sf)
+library(rWind)
+library(stars)
+library(gdistance)
+
+# movement analysis 
+library(amt)
+```
+
+# Import Dataset 
+
+## tern movement data
+
+Import the tracking data (BF426)
+```{r tern data}
+# call the raw filtered csv data - name it as its id 
+BF426 <- fread(here("data/ModeledTracks/BF426_smNEW.csv"))
+
+# create a new column with id 
+BF426 <- BF426 %>% mutate(names = "BF426")
+
+# only filter fall migration (2017-08-08 12:22:00 ~ 2017-11-17 12:22:00)
+fall.BF426 <- BF426 %>% filter(Time1 > '2017-08-08 00:00:00' & Time1 < "2017-11-17 23:59:59")
+
+# select the columns that we want only
+fall.BF426 <- fall.BF426 %>% dplyr::select(Time1, `Lon.50%`, `Lat.50%`, names)
+
+# change the column names 
+colnames(fall.BF426) <- c("time","x","y", "id")
+
+# create an additional column the data format without time 
+fall.BF426$date = as.Date(fall.BF426$time)
+
+# summary of terns 
+summary(fall.BF426)
+```
+
+## daily wind data
+```{r wind data}
+## set the time series 11 hrs interval
+#fall.wind <- seq(ymd_hms(paste(2017, 8, 8, 00, 00, 00, sep ="-")), ymd_hms(paste(2017, 11, 17, 23, 59, 59, sep = "-")), by = "24 hours")
+
+# download Atlantic ocean dataset of a specified date range from GFS 
+#wind_data <- wind.dl_2(fall.wind, -80, 30, -70, 70)
+
+# tidy the wind data as a data frame
+#fall_wind <- rWind::tidy(wind_data)
+
+# save the wind_data 
+#write_rds(fall_wind, path = here("data", "fall_wind_daily_unfiltered.Rdata"))
+
+# read the rds file (the saved above code runs)
+fall.wind <- read_rds(here("data", "fall_wind_daily_unfiltered.Rdata"))
+
+# look at the summary of the data
+summary(fall.wind)
+
+# convert the wind data to raster
+wind_raster = wind2raster(fall.wind)
+
+# plot the raster
+plot(wind_raster)
+
+# calculate flow-based cost based on paper Fellcislmo et al. 2008
+## cost = (1/speed)*(horizontal factor)
+wind_cost <- flow.dispersion(wind_raster, type = "active")
+
+# check the cost transition object
+wind_cost
+
+# convert it to the raster object 
+wind_cost_raster =  raster(wind_cost)
+
+# plot the raster object 
+plot(wind_cost_raster)
+```
+
+# data manipulation 
+
+## amt object: make tracks and extract wind layer values per track
+
+convert the tern tracking data to trk object (resample by 12 hours and create available steps)
+```{r convert trk object}
+# create a track of BF426
+trk.BF426 <- amt::make_track(fall.BF426, .x = x, .y = y, .t = time, id = id, date = date)
+
+# check the sampling rates of the data - 12 hours might be the best
+trk.BF426 %>% summarize_sampling_rate()
+
+# re-sample the tracks by 12 hours and create used and available points and steps 
+resample_trk_BF426 <- trk.BF426 %>% track_resample(rate = hours(12), tolerance = hours(1)) %>% steps_by_burst() %>% random_steps()
+```
+
+extract wind layer values 
+```{r extract wind speed and dir values}
+# extract fall wind direction, speed, and layer
+fall_wind_trk_BF426 <- resample_trk_BF426 %>% extract_covariates(wind_raster) %>% extract_covariates(wind_cost_raster)
+
+# check the data if the values are successfully extracted from the layers 
+summary(fall_wind_trk_BF426)
+
+# change the wind cost column name as "cost"
+colnames(fall_wind_trk_BF426)[15] <- "cost"
+```
+
+save the extracted resampled trk data 
+```{r save the resampled trk data}
+# save the filtered saved trk data with wind covariates
+#write_rds(fall_wind_trk_BF426, path = here("data", "fall_wind_trk.Rdata"))
+```
+
+# Document Footer
+```{r}
+sessionInfo()
+```
