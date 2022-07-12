@@ -1,0 +1,116 @@
+---
+title: "3.data_analysis"
+author: "Dennis Kim"
+date: '2022-07-06'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preamble 
+
+call relevant libraries 
+```{r import_libraries}
+# data wrangling 
+library(dplyr)
+library(readr)
+library(data.table)
+library(ezknitr)
+library(here)
+library(DT)
+library(lubridate)
+library(stringr)
+library(bit64)
+library(tidyr)
+library(purrr)
+library(tidyr)
+library(broom)
+library(forcats)
+
+# movement analysis 
+library(amt)
+
+# visualization
+library(ggplot2)
+library(jtools)
+library(ggstance)
+library(broom.mixed)
+```
+
+# Import Dataset 
+
+Read in the tern tracks 
+```{r tern tracks}
+# read the tern tracks 
+ssfdat <- read_rds(here("data", "fall_wind_trk.Rdata"))
+
+# summary of the data 
+summary(ssfdat)
+```
+
+# Fit SSF
+```{r fit ssf}
+# model fit
+m1 <- ssfdat %>% fit_issf(case_ ~ direction + speed + cost + sl_ + log(sl_) + cos(ta_)+ strata(step_id_), model = TRUE)
+
+# summary of coefficients
+summary(m1)
+```
+**[Interpreation]**
+
+* direction: **negative coefficient: the tern is less likely to select the location as the direction increases by 1 unit while others are equally available.**
+* speed: **negative coefficient: the tern is less likely to select the location as the speed increases by 1 unit while others are equally available.**
+* cost: **negative coefficient: the tern is less likely to select the location as the cost increases by 1 unit while others are equally available.**
+
+# Visualization 
+
+## Prep for coefficient data 
+```{r coefficient df}
+# coefficient data frame 
+coef_df <- m1$model$coefficients %>% tidy()
+
+# CI data frame
+conf_df <- m1$model %>% confint() %>% as.data.frame() %>% mutate(names = c("direction", "speed", "cost", "sl_", "log(sl_)", "cos(ta_)"))
+
+# left join the coef df to conf df 
+fit.df <- left_join(conf_df, coef_df)
+
+# change the column names 
+colnames(fit.df) <- c("lowCI", "highCI", "names", "beta")
+
+# reorder by column name 
+fit.df <- fit.df[, c("names", "beta", "lowCI", "highCI")]
+
+# check the filtered data 
+fit.df
+```
+
+## Visualization of the coefficients with CIs 
+```{r visualization with CIs}
+# visualization 
+tern.fig <- fit.df %>% dplyr::mutate(names = forcats::fct_relevel(names, sort)) %>% 
+  ggplot(., aes(beta, names, colour = names)) +
+  geom_vline(xintercept = 0, lty = 2, lwd = 1, colour = "grey50")+
+  geom_point(size = 3, pch = 20, position = position_dodge(width = 0.5))+
+  geom_linerange(aes(xmax = highCI, xmin = lowCI))+
+  theme_bw()+
+  xlab("Effect size")+
+  ggtitle("SSF Parameter estimates")+
+  theme(legend.position = "none",
+        axis.title.y = element_blank())
+
+tern.fig
+```
+
+save the SSF estimates plot 
+```{r save the plot}
+ggsave("tern_fig.png", tern.fig, width = 10, height = 7)
+```
+
+
+# Document Footer
+```{r}
+sessionInfo()
+```
