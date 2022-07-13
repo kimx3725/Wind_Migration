@@ -13,7 +13,7 @@
 
 - 2.data_manipulation.Rmd:
   - regularize the track data and convert the data to trk object with 'amt' package 
-  - calculate the wind cost based on Fellcislmo et al. 2008
+  - calculate the wind cost based on Felicisimo et al. 2008
   - extract wind covariates from the raster layers that match the tracking locations 
   
 - 3.data_analysis.Rmd:
